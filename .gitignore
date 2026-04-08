@@ -1,0 +1,29 @@
+# Banco de dados (gerado localmente)
+*.db
+*.db-journal
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Ambiente virtual
+venv/
+.venv/
+env/
+
+# Arquivos gerados
+*.xlsx
+!templates/fgi_template.xlsx
+
+# Logs
+*.log
+/tmp/
+
+# IDE
+.vscode/
+.idea/
+
+# Secrets
+.env
