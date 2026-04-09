@@ -10,3 +10,4 @@ rapidfuzz==3.10.0
 python-multipart==0.0.12
 xlrd==2.0.1
 pytest==8.3.3
+aiofiles==23.2.1

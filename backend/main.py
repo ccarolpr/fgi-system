@@ -2,6 +2,8 @@ import os
 os.environ.setdefault("TESSDATA_PREFIX", r"C:\Users\KWAY07\AppData\Local\tessdata")
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from backend.database import create_tables
 from backend.routers import employees, atestados, reports
 
@@ -21,10 +23,12 @@ app.include_router(employees.router)
 app.include_router(atestados.router)
 app.include_router(reports.router)
 
+app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
-@app.get("/", tags=["Status"])
-def root():
-    return {"status": "ok", "sistema": "FGI", "versao": "1.0.0"}
+
+@app.get("/", include_in_schema=False)
+def serve_index():
+    return FileResponse("frontend/index.html")
 
 
 @app.get("/debug/ocr", tags=["Status"])

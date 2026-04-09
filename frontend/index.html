@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FGI — Fato Gerador Incerto | KWAY</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+
+  <header id="app-header">
+    <img src="/static/logo.png" alt="KWAY" id="kway-logo">
+    <div>
+      <h1>FGI</h1>
+      <p>Fato Gerador Incerto — Correios CEINT</p>
+    </div>
+  </header>
+
+  <nav id="tab-nav">
+    <button class="tab-btn" data-tab="colaboradores">Colaboradores</button>
+    <button class="tab-btn" data-tab="atestados">Atestados</button>
+    <button class="tab-btn" data-tab="relatorio">Relatório</button>
+  </nav>
+
+  <div id="toast-container"></div>
+
+  <main id="app-main">
+    <section id="panel-colaboradores" class="tab-panel"></section>
+    <section id="panel-atestados"     class="tab-panel hidden"></section>
+    <section id="panel-relatorio"     class="tab-panel hidden"></section>
+  </main>
+
+  <!-- Ordem: api.js → módulos → app.js (app.js inicializa tudo) -->
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/colaboradores.js"></script>
+  <script src="/static/js/atestados.js"></script>
+  <script src="/static/js/relatorio.js"></script>
+  <script src="/static/js/app.js"></script>
+
+</body>
+</html>
