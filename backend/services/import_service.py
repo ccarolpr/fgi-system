@@ -1,19 +1,24 @@
 """
-Importação de colaboradores via planilha Excel da contabilidade.
+Importação de colaboradores via planilha Excel da contabilidade (KWAY MATRIZ).
 
 Regras:
+  - Importa APENAS colaboradores dos contratos "CORREIOS - CEINT" e "CORREIOS - CLI".
   - CPF é a chave de upsert. Sem CPF no registro → erro, linha ignorada.
-  - Campos atualizados: nome, funcao, salario, data_demissao, status.
+  - Campos atualizados: nome, funcao, salario, contrato, data_admissao, data_demissao, status.
   - Alterações de salário são registradas em EmployeeAudit sempre.
   - Variações acima do threshold (config.py) geram alerta_ativo=True.
   - Salário <= 0 bloqueia o registro com erro explícito (nunca silencioso).
-  - Demitidos: status → inativo (soft delete), histórico preservado.
-  - Novos colaboradores: inseridos com status ativo.
+  - Demitidos: coluna "Demissão" preenchida → status inativo, histórico preservado.
+  - Ativos: coluna "Demissão" vazia → status ativo.
 
-Formato esperado da planilha (colunas obrigatórias, nomes flexíveis via mapeamento):
-  CPF | NOME | FUNÇÃO | SALÁRIO | DATA ADMISSÃO | DATA DEMISSÃO (opcional)
+Formato esperado (planilha ATIVOS E DEM KWAY MATRIZ):
+  Empresa | Nome da Empresa | Funcionário | Matricula eSocial | Nome do Funcionário
+  | Função | CBO | Salário Base | Departamento | Admissão | Demissão | ...
+  | CPF | ...
 
-O serviço detecta os cabeçalhos automaticamente por similaridade (case-insensitive).
+Contratos importados:
+  - CORREIOS - CEINT
+  - CORREIOS - CLI
 """
 
 import re
@@ -21,7 +26,6 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Optional
 
-import openpyxl
 import pandas as pd
 from sqlalchemy.orm import Session
 
@@ -31,28 +35,22 @@ from backend.models.employee_audit import EmployeeAudit, OrigemAlteracao
 
 
 # ---------------------------------------------------------------------------
-# Mapeamento de cabeçalhos aceitos (normalizado → campo interno)
+# Contratos aceitos na importação
 # ---------------------------------------------------------------------------
-HEADER_MAP = {
-    "cpf": "cpf",
-    "nome": "nome",
-    "funcao": "funcao",
-    "função": "funcao",
-    "salario": "salario",
-    "salário": "salario",
-    "salario projetado": "salario",
-    "salário projetado": "salario",
-    "admissao": "data_admissao",
-    "admissão": "data_admissao",
-    "data admissao": "data_admissao",
-    "data admissão": "data_admissao",
-    "demissao": "data_demissao",
-    "demissão": "data_demissao",
-    "data demissao": "data_demissao",
-    "data demissão": "data_demissao",
+CONTRATOS_ACEITOS = {"CORREIOS - CEINT", "CORREIOS - CLI"}
+
+# Mapeamento: nome interno → possíveis nomes de coluna na planilha (lowercase sem acento)
+HEADER_ALIASES = {
+    "nome":           ["nome do funcionario", "nome funcionario", "nome"],
+    "funcao":         ["funcao", "função"],
+    "salario":        ["salario base", "salario", "salário base", "salário", "salario projetado"],
+    "contrato":       ["departamento"],
+    "data_admissao":  ["admissao", "admissão", "data admissao", "data admissão"],
+    "data_demissao":  ["demissao", "demissão", "data demissao", "data demissão"],
+    "cpf":            ["cpf"],
 }
 
-CAMPOS_OBRIGATORIOS = {"cpf", "nome", "funcao", "salario"}
+CAMPOS_OBRIGATORIOS = {"cpf", "nome", "funcao", "salario", "contrato"}
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +60,7 @@ CAMPOS_OBRIGATORIOS = {"cpf", "nome", "funcao", "salario"}
 class ImportResult:
     inseridos: int = 0
     atualizados: int = 0
+    ignorados_outros_contratos: int = 0
     erros: list = field(default_factory=list)
     alertas_salario: list = field(default_factory=list)
 
@@ -69,14 +68,46 @@ class ImportResult:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _normalizar_cpf(cpf: str) -> str:
+def _normalizar_texto(s: str) -> str:
+    """Minúsculas, remove acentos simples para comparação."""
+    return (
+        str(s).strip().lower()
+        .replace("á", "a").replace("ã", "a").replace("â", "a").replace("à", "a")
+        .replace("é", "e").replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o").replace("õ", "o").replace("ô", "o")
+        .replace("ú", "u").replace("ü", "u")
+        .replace("ç", "c")
+    )
+
+
+def _normalizar_cpf(cpf) -> str:
     """Remove pontos, traços e espaços. Retorna somente dígitos."""
     return re.sub(r"\D", "", str(cpf))
 
 
-def _parse_date(valor) -> Optional[date]:
-    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+def _parse_date(valor, datemode: int = 0) -> Optional[date]:
+    """
+    Converte vários formatos para date:
+      - float/int: número serial Excel (xlrd)
+      - datetime / pd.Timestamp
+      - date
+      - string: tenta múltiplos formatos
+      - vazio / NaN: None
+    """
+    if valor is None:
         return None
+    if isinstance(valor, float):
+        if pd.isna(valor):
+            return None
+        if valor == 0.0:
+            return None
+        # Número serial do Excel — xlrd datemode (0 = 1900, 1 = 1904)
+        try:
+            import xlrd
+            return xlrd.xldate_as_datetime(valor, datemode).date()
+        except Exception:
+            return None
     if isinstance(valor, (datetime, pd.Timestamp)):
         return valor.date()
     if isinstance(valor, date):
@@ -85,7 +116,8 @@ def _parse_date(valor) -> Optional[date]:
         valor = valor.strip()
         if not valor:
             return None
-        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y",
+                    "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S"):
             try:
                 return datetime.strptime(valor, fmt).date()
             except ValueError:
@@ -105,36 +137,54 @@ def _variacao_relevante(anterior: float, novo: float) -> bool:
 # Leitura e detecção de cabeçalhos
 # ---------------------------------------------------------------------------
 def _detectar_cabecalhos(df: pd.DataFrame) -> dict[str, str]:
-    """Mapeia colunas do DataFrame para nomes internos via HEADER_MAP."""
-    mapeamento = {}
+    """
+    Mapeia campo interno → coluna real do DataFrame.
+    Usa HEADER_ALIASES com normalização de texto.
+    """
+    # Índice reverso: alias normalizado → campo interno
+    alias_map: dict[str, str] = {}
+    for campo, aliases in HEADER_ALIASES.items():
+        for alias in aliases:
+            alias_map[_normalizar_texto(alias)] = campo
+
+    mapeamento: dict[str, str] = {}
     for col in df.columns:
-        chave = str(col).strip().lower()
-        if chave in HEADER_MAP:
-            mapeamento[HEADER_MAP[chave]] = col
+        chave = _normalizar_texto(str(col))
+        if chave in alias_map:
+            campo_interno = alias_map[chave]
+            if campo_interno not in mapeamento:  # primeira ocorrência vence
+                mapeamento[campo_interno] = col
     return mapeamento
 
 
-def _ler_planilha(caminho_ou_bytes) -> pd.DataFrame:
-    """Lê a primeira aba da planilha, pulando linhas vazias no início."""
-    # Tenta encontrar a linha de cabeçalho (primeira linha com ≥3 células não-nulas)
-    wb = openpyxl.load_workbook(caminho_ou_bytes, data_only=True)
-    ws = wb.active
-    header_row = None
-    for i, row in enumerate(ws.iter_rows(values_only=True)):
-        nao_nulos = sum(1 for c in row if c is not None)
-        if nao_nulos >= 3:
-            header_row = i
-            break
-    if header_row is None:
-        raise ValueError("Não foi possível identificar a linha de cabeçalho na planilha.")
+def _ler_planilha(caminho_ou_bytes, filename: str = "") -> tuple[pd.DataFrame, int]:
+    """
+    Lê a primeira aba da planilha.
+    Suporta .xls (xlrd) e .xlsx (openpyxl).
+    Retorna (DataFrame, datemode) — datemode necessário para converter seriais do Excel.
+    """
+    is_xls = str(filename).lower().endswith(".xls") if filename else False
 
-    df = pd.read_excel(
-        caminho_ou_bytes,
-        header=header_row,
-        dtype=str,
-    )
+    if is_xls:
+        import xlrd
+        # Detecta datemode para converter datas corretamente
+        if hasattr(caminho_ou_bytes, "read"):
+            data = caminho_ou_bytes.read()
+            wb = xlrd.open_workbook(file_contents=data)
+            # Relê como BytesIO para o pandas
+            import io
+            caminho_ou_bytes = io.BytesIO(data)
+        else:
+            wb = xlrd.open_workbook(caminho_ou_bytes)
+        datemode = wb.datemode
+
+        df = pd.read_excel(caminho_ou_bytes, engine="xlrd", dtype=str)
+    else:
+        datemode = 0
+        df = pd.read_excel(caminho_ou_bytes, engine="openpyxl", dtype=str)
+
     df.dropna(how="all", inplace=True)
-    return df
+    return df, datemode
 
 
 # ---------------------------------------------------------------------------
@@ -144,39 +194,49 @@ def importar_colaboradores(
     caminho_ou_bytes,
     db: Session,
     origem: OrigemAlteracao = OrigemAlteracao.importacao_planilha,
+    filename: str = "",
 ) -> ImportResult:
     """
-    Lê planilha e aplica upsert por CPF no banco de dados.
+    Lê planilha da contabilidade (KWAY MATRIZ) e aplica upsert por CPF.
+    Importa apenas colaboradores dos contratos CORREIOS - CEINT e CORREIOS - CLI.
 
     Args:
-        caminho_ou_bytes: Caminho para o arquivo Excel ou objeto bytes/BytesIO.
-        db:              Sessão SQLAlchemy ativa.
-        origem:          Origem registrada no audit log.
+        caminho_ou_bytes: Caminho para o arquivo ou objeto bytes/BytesIO.
+        db:               Sessão SQLAlchemy ativa.
+        origem:           Origem registrada no audit log.
+        filename:         Nome original do arquivo (usado para detectar .xls vs .xlsx).
 
     Returns:
         ImportResult com contagens e listas de erros/alertas.
     """
     resultado = ImportResult()
 
-    df = _ler_planilha(caminho_ou_bytes)
+    df, datemode = _ler_planilha(caminho_ou_bytes, filename)
     mapa = _detectar_cabecalhos(df)
 
     ausentes = CAMPOS_OBRIGATORIOS - set(mapa.keys())
     if ausentes:
         resultado.erros.append(
-            f"Planilha não contém colunas obrigatórias: {', '.join(ausentes)}. "
-            f"Colunas encontradas: {list(df.columns)}"
+            f"Planilha não contém colunas obrigatórias: {', '.join(sorted(ausentes))}. "
+            f"Colunas encontradas: {list(df.columns[:15])}"
         )
         return resultado
 
     for idx, row in df.iterrows():
         linha_num = idx + 2  # +2: cabeçalho + índice base-0
 
+        # --- Filtro por contrato ---
+        contrato_raw = str(row.get(mapa["contrato"], "")).strip()
+        contrato = contrato_raw.upper()
+        if contrato not in CONTRATOS_ACEITOS:
+            resultado.ignorados_outros_contratos += 1
+            continue
+
         # --- CPF ---
         cpf_raw = row.get(mapa["cpf"], "")
         cpf = _normalizar_cpf(cpf_raw)
         if len(cpf) not in (11, 14):
-            resultado.erros.append(f"Linha {linha_num}: CPF inválido '{cpf_raw}' — ignorado.")
+            resultado.erros.append(f"Linha {linha_num}: CPF inválido '{cpf_raw}' [{contrato}] — ignorado.")
             continue
 
         # --- Nome ---
@@ -192,11 +252,12 @@ def importar_colaboradores(
             continue
 
         # --- Salário ---
+        salario_raw = row.get(mapa["salario"], "0")
         try:
-            salario = float(str(row.get(mapa["salario"], "0")).replace(",", ".").strip())
-        except ValueError:
+            salario = float(str(salario_raw).replace(",", ".").strip())
+        except (ValueError, TypeError):
             resultado.erros.append(
-                f"Linha {linha_num} (CPF {cpf}): salário inválido '{row.get(mapa['salario'])}' — ignorado."
+                f"Linha {linha_num} (CPF {cpf}): salário inválido '{salario_raw}' — ignorado."
             )
             continue
 
@@ -208,29 +269,43 @@ def importar_colaboradores(
             continue
 
         # --- Datas ---
-        data_admissao = _parse_date(row.get(mapa.get("data_admissao"))) if "data_admissao" in mapa else None
-        data_demissao = _parse_date(row.get(mapa.get("data_demissao"))) if "data_demissao" in mapa else None
+        adm_raw = row.get(mapa.get("data_admissao")) if "data_admissao" in mapa else None
+        dem_raw = row.get(mapa.get("data_demissao")) if "data_demissao" in mapa else None
+
+        # Valores lidos como string pelo dtype=str; tenta converter para float se for serial
+        def _to_numeric_or_str(val):
+            if val is None:
+                return None
+            s = str(val).strip()
+            if not s or s.lower() in ("nan", "none", ""):
+                return None
+            try:
+                return float(s)
+            except ValueError:
+                return s
+
+        data_admissao = _parse_date(_to_numeric_or_str(adm_raw), datemode)
+        data_demissao = _parse_date(_to_numeric_or_str(dem_raw), datemode)
         novo_status = StatusColaborador.inativo if data_demissao else StatusColaborador.ativo
 
         # --- Upsert ---
         existente = db.query(Employee).filter_by(cpf=cpf).first()
 
         if existente is None:
-            # Inserção
             novo = Employee(
                 cpf=cpf,
                 nome=nome,
                 funcao=funcao,
                 salario=salario,
+                contrato=contrato_raw,
                 data_admissao=data_admissao,
                 data_demissao=data_demissao,
                 status=novo_status,
             )
             db.add(novo)
-            db.flush()  # obtém ID antes do audit
+            db.flush()
             resultado.inseridos += 1
         else:
-            # Atualização — registrar alterações de campos críticos
             alteracoes = {}
             if existente.nome != nome:
                 alteracoes["nome"] = (existente.nome, nome)
@@ -241,6 +316,9 @@ def importar_colaboradores(
             if existente.salario != salario:
                 alteracoes["salario"] = (existente.salario, salario)
                 existente.salario = salario
+            if existente.contrato != contrato_raw:
+                alteracoes["contrato"] = (existente.contrato, contrato_raw)
+                existente.contrato = contrato_raw
             if data_demissao and existente.data_demissao != data_demissao:
                 alteracoes["data_demissao"] = (str(existente.data_demissao), str(data_demissao))
                 existente.data_demissao = data_demissao

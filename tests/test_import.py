@@ -44,7 +44,7 @@ def make_xlsx(rows: list[dict]) -> io.BytesIO:
     """Cria planilha com cabeçalho padrão e as linhas fornecidas."""
     wb = openpyxl.Workbook()
     ws = wb.active
-    headers = ["CPF", "NOME", "FUNÇÃO", "SALÁRIO", "ADMISSÃO", "DEMISSÃO"]
+    headers = ["CPF", "NOME", "FUNÇÃO", "SALÁRIO", "DEPARTAMENTO", "ADMISSÃO", "DEMISSÃO"]
     ws.append(headers)
     for row in rows:
         ws.append([
@@ -52,6 +52,7 @@ def make_xlsx(rows: list[dict]) -> io.BytesIO:
             row.get("nome", ""),
             row.get("funcao", ""),
             row.get("salario", ""),
+            row.get("contrato", "CORREIOS - CEINT"),  # padrão: CEINT
             row.get("admissao", ""),
             row.get("demissao", ""),
         ])

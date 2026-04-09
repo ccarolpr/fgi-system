@@ -189,9 +189,16 @@ async def upload_atestado(
             colab_id = emp.id
         else:
             resultado_ocr.avisos.append(
-                f"CPF {resultado_ocr.cpf} não encontrado no cadastro. "
-                "Faça o cadastro manual ou vincule a outro colaborador."
+                f"CPF {resultado_ocr.cpf} não encontrado — possível erro de leitura OCR. "
+                "Veja os candidatos abaixo pelo nome."
             )
+            # Fallback: busca por nome quando CPF não bate (OCR pode ter errado dígitos)
+            if resultado_ocr.nome:
+                matches = employee_matcher.buscar_por_nome(resultado_ocr.nome, db)
+                candidatos = [
+                    {"id": c.colaborador.id, "nome": c.colaborador.nome, "cpf": c.colaborador.cpf, "score": c.score}
+                    for c in matches
+                ]
     elif resultado_ocr.nome:
         # Sem CPF → busca por nome para apresentar candidatos ao usuário
         matches = employee_matcher.buscar_por_nome(resultado_ocr.nome, db)

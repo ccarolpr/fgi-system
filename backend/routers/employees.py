@@ -35,6 +35,7 @@ class EmployeeCreate(BaseModel):
     nome: str
     funcao: str
     salario: float
+    contrato: Optional[str] = None
     data_admissao: Optional[date] = None
     data_demissao: Optional[date] = None
 
@@ -59,6 +60,7 @@ class EmployeeUpdate(BaseModel):
     nome: Optional[str] = None
     funcao: Optional[str] = None
     salario: Optional[float] = None
+    contrato: Optional[str] = None
     data_admissao: Optional[date] = None
     data_demissao: Optional[date] = None
 
@@ -76,6 +78,7 @@ class EmployeeOut(BaseModel):
     nome: str
     funcao: str
     salario: float
+    contrato: Optional[str]
     data_admissao: Optional[date]
     data_demissao: Optional[date]
     status: StatusColaborador
@@ -118,6 +121,7 @@ def cadastrar_colaborador(data: EmployeeCreate, db: Session = Depends(get_db)):
         nome=data.nome,
         funcao=data.funcao,
         salario=data.salario,
+        contrato=data.contrato,
         data_admissao=data.data_admissao,
         data_demissao=data.data_demissao,
         status=StatusColaborador.inativo if data.data_demissao else StatusColaborador.ativo,
@@ -191,15 +195,17 @@ async def importar_planilha(
         raise HTTPException(status_code=400, detail="Arquivo deve ser .xlsx ou .xls.")
 
     conteudo = await file.read()
-    resultado = importar_colaboradores(io.BytesIO(conteudo), db)
+    resultado = importar_colaboradores(io.BytesIO(conteudo), db, filename=file.filename or "")
 
     return {
         "inseridos": resultado.inseridos,
         "atualizados": resultado.atualizados,
+        "ignorados_outros_contratos": resultado.ignorados_outros_contratos,
         "erros": resultado.erros,
         "alertas_salario": resultado.alertas_salario,
         "mensagem": (
             f"{resultado.inseridos} inserido(s), {resultado.atualizados} atualizado(s), "
+            f"{resultado.ignorados_outros_contratos} ignorado(s) (outros contratos), "
             f"{len(resultado.erros)} erro(s)."
         ),
     }

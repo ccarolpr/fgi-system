@@ -19,6 +19,7 @@ class Employee(Base):
     nome: Mapped[str] = mapped_column(String(150), nullable=False)
     funcao: Mapped[str] = mapped_column(String(100), nullable=False)
     salario: Mapped[float] = mapped_column(Float, nullable=False)
+    contrato: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
     data_admissao: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     data_demissao: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     status: Mapped[StatusColaborador] = mapped_column(
