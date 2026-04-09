@@ -31,6 +31,7 @@ const AtestadosModule = (() => {
     ocrStep:          OCR_STEP.IDLE,
     ocrAtestado:      null,     // resposta completa do POST /upload
     ocrForm:          {},       // campos editáveis pelo operador
+    ocrFile:          null,     // objeto File preservado entre renders
     ocrSelectedFile:  null,
 
     // Lista
@@ -255,12 +256,20 @@ const AtestadosModule = (() => {
             <button class="btn btn-ghost btn-sm" data-action="vincular-cancelar">✕</button>
           </div>`;
       }
-      return `<button class="btn btn-outline btn-sm" data-action="vincular-iniciar"
-        data-id="${a.id}" data-nome="${(a.nome_ocr || '').replace(/"/g, '&quot;')}">Vincular</button>`;
+      return `
+        <div style="display:flex;gap:.4rem">
+          <button class="btn btn-outline btn-sm" data-action="vincular-iniciar"
+            data-id="${a.id}" data-nome="${(a.nome_ocr || '').replace(/"/g, '&quot;')}">Vincular</button>
+          <button class="btn btn-ghost btn-sm" data-action="excluir" data-id="${a.id}" title="Excluir">🗑</button>
+        </div>`;
     }
 
     if (a.status === 'pendente_validacao') {
       return `<button class="btn btn-danger btn-sm" data-action="rejeitar" data-id="${a.id}">Rejeitar</button>`;
+    }
+
+    if (a.status === 'rejeitado') {
+      return `<button class="btn btn-ghost btn-sm" data-action="excluir" data-id="${a.id}" title="Excluir">🗑</button>`;
     }
 
     return '';
@@ -268,12 +277,11 @@ const AtestadosModule = (() => {
 
   // ── Ações OCR ────────────────────────────────────────────────────────────────
   async function handleUpload() {
-    const input = document.getElementById('ocr-file-input');
-    if (!input || !input.files[0]) return;
+    if (!state.ocrFile) return;
     if (!ocrTransition(OCR_STEP.UPLOADING)) return;
 
     const form = new FormData();
-    form.append('file', input.files[0]);
+    form.append('file', state.ocrFile);
     setState({ ocrStep: OCR_STEP.UPLOADING });
 
     try {
@@ -293,6 +301,7 @@ const AtestadosModule = (() => {
         },
       });
     } catch (e) {
+      state.ocrFile = null;
       setState({ ocrStep: OCR_STEP.IDLE, ocrSelectedFile: null });
       toast(e.isApiError ? e.message : 'Erro inesperado ao processar OCR.', 'error');
       if (!e.isApiError) console.error('[Atestados OCR upload]', e);
@@ -316,6 +325,7 @@ const AtestadosModule = (() => {
 
     try {
       await API.atestados.confirmar(id, dados);
+      state.ocrFile = null;
       setState({
         ocrStep: OCR_STEP.IDLE,
         ocrAtestado: null,
@@ -336,6 +346,7 @@ const AtestadosModule = (() => {
     const id = state.ocrAtestado.atestado.id;
     try {
       await API.atestados.rejeitar(id);
+      state.ocrFile = null;
       setState({ ocrStep: OCR_STEP.IDLE, ocrAtestado: null, ocrForm: {}, ocrSelectedFile: null });
       toast('Atestado rejeitado.', 'warn');
       carregarLista();
@@ -351,6 +362,17 @@ const AtestadosModule = (() => {
       carregarLista();
     } catch (e) {
       toast(e.isApiError ? e.message : 'Erro ao rejeitar.', 'error');
+    }
+  }
+
+  async function excluir(id) {
+    if (!confirm('Excluir este atestado permanentemente?')) return;
+    try {
+      await API.atestados.excluir(id);
+      toast('Atestado excluído.', 'warn');
+      carregarLista();
+    } catch (e) {
+      toast(e.isApiError ? e.message : 'Erro ao excluir.', 'error');
     }
   }
 
@@ -411,6 +433,7 @@ const AtestadosModule = (() => {
         case 'ocr-confirmar':     confirmar(); break;
         case 'ocr-rejeitar':      rejeitarOcr(); break;
         case 'ocr-cancelar':
+          state.ocrFile = null;
           setState({ ocrStep: OCR_STEP.IDLE, ocrAtestado: null, ocrForm: {}, ocrSelectedFile: null });
           break;
         case 'filtrar-lista':     carregarLista(); break;
@@ -418,12 +441,14 @@ const AtestadosModule = (() => {
         case 'vincular-confirmar':vincularConfirmar(id); break;
         case 'vincular-cancelar': setState({ vinculandoId: null }); break;
         case 'rejeitar':          rejeitarDaLista(id); break;
+        case 'excluir':           excluir(id); break;
       }
     });
 
     panel.addEventListener('change', e => {
-      // Arquivo OCR
+      // Arquivo OCR — guarda o File object no state ANTES de re-renderizar
       if (e.target.id === 'ocr-file-input' && e.target.files[0]) {
+        state.ocrFile = e.target.files[0];
         setState({ ocrSelectedFile: e.target.files[0].name });
         return;
       }

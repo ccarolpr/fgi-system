@@ -8,6 +8,7 @@ GET    /atestados/{id}                — detalhe
 PATCH  /atestados/{id}/vincular       — vincula colaborador (para sem_vinculo)
 PATCH  /atestados/{id}/confirmar      — confirma após revisão
 PATCH  /atestados/{id}/rejeitar       — rejeita atestado
+DELETE /atestados/{id}                — exclui permanentemente (apenas rejeitado ou sem_vinculo)
 POST   /atestados/{id}/correcao       — correção auditada pós-confirmação
 GET    /atestados/{id}/correcoes      — histórico de correções
 GET    /atestados/busca-nome          — busca candidatos por nome (para vinculação manual)
@@ -413,6 +414,19 @@ def rejeitar_atestado(id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(atestado)
     return atestado
+
+
+@router.delete("/{id}", status_code=204)
+def excluir_atestado(id: int, db: Session = Depends(get_db)):
+    """Exclui permanentemente um atestado rejeitado ou sem_vinculo."""
+    atestado = _get_atestado_ou_404(id, db)
+    if atestado.status not in (StatusAtestado.rejeitado, StatusAtestado.sem_vinculo):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Apenas atestados rejeitados ou sem vínculo podem ser excluídos (status atual: {atestado.status.value}).",
+        )
+    db.delete(atestado)
+    db.commit()
 
 
 @router.post("/{id}/correcao", response_model=CorrecaoOut, status_code=201)

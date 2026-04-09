@@ -54,8 +54,9 @@ const API = (() => {
       listar:    (p)         => req('GET',  '/atestados', { params: p }).then(r => r.json()),
       vincular:  (id, cid)   => req('PATCH', `/atestados/${id}/vincular`, { body: { colaborador_id: cid } }).then(r => r.json()),
       confirmar: (id, dados) => req('PATCH', `/atestados/${id}/confirmar`, { body: dados }).then(r => r.json()),
-      rejeitar:  (id)        => req('PATCH', `/atestados/${id}/rejeitar`).then(r => r.json()),
-      buscaNome: (nome)      => req('GET',   '/atestados/busca-nome', { params: { nome } }).then(r => r.json()),
+      rejeitar:  (id)        => req('PATCH',  `/atestados/${id}/rejeitar`).then(r => r.json()),
+      excluir:   (id)        => req('DELETE', `/atestados/${id}`),
+      buscaNome: (nome)      => req('GET',    '/atestados/busca-nome', { params: { nome } }).then(r => r.json()),
     },
 
     relatorio: {
