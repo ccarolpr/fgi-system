@@ -2,14 +2,33 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Deploy procedure
+
+**Every change must be committed and pushed before moving to the next task.**
+
+```bash
+# Stage changed files (never use git add -A to avoid committing fgi.db or .env)
+git add <files>
+
+# Commit (describe what changed and why)
+git commit -m "feat/fix/refactor: descrição clara da mudança"
+
+# Push to remote
+git push origin master
+```
+
+Remote: `https://github.com/ccarolpr/fgi-system.git`
+
+To revert to a previous version: `git log --oneline` to find the commit, then `git revert <hash>`.
+
 ## Commands
 
 ```bash
 # Install dependencies
 pip install -r requirements.txt
 
-# Run the API server
-uvicorn backend.main:app --reload
+# Run the API server (sem --reload para não reiniciar durante OCR)
+python -m uvicorn backend.main:app --port 8002
 
 # Run all tests
 pytest tests/ -v
