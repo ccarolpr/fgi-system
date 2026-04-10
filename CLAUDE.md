@@ -75,7 +75,7 @@ Atestados (confirmed) → consolidation.py (sum per employee/month) → fgi_calc
 | Router | Prefix | Key endpoints |
 |--------|--------|--------------|
 | `employees.py` | `/employees` | CRUD + `POST /employees/import` (Excel upsert by CPF) |
-| `atestados.py` | `/atestados` | `POST /upload` (OCR), `POST /manual`, `PATCH /{id}/confirmar`, `PATCH /{id}/vincular`, `POST /{id}/correcao` |
+| `atestados.py` | `/atestados` | `POST /upload` (OCR), `POST /manual`, `PATCH /{id}/confirmar`, `PATCH /{id}/vincular`, `PATCH /{id}/rejeitar`, `DELETE /{id}` (só rejeitado/sem_vinculo), `POST /{id}/correcao` |
 | `reports.py` | `/reports/{ano}/{mes}` | `GET /preview`, `POST /generate`, `GET /download`, `POST /fechar` |
 
 ### Database
